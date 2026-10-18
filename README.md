@@ -17,16 +17,6 @@ Codex Skill 放到 `~/.codex/skills/pdf-figure-vector/`，或作为 Claude Code 
 - **PPTX 可编辑**：文字/形状/图片分别生成，自动校验是否为整张位图贴图
 - **自动清理**：生成结束后删掉 `assets/`、`fonts/`、诊断 PNG、调参脚本等中间产物，只留成品
 - **跨 agent**：Claude Code、Codex CLI、普通终端、SSH/headless 都能跑；预览按环境自动降级
-
-## 环境要求
-
-- Python 3.9+
-- 依赖见 `requirements.txt`
-- 对比功能需要 Google Chrome（Windows / macOS / Linux）
-- VS Code 自动预览（可选）：
-  - Windows + PowerShell
-  - VS Code 1.141+（`Open Integrated Browser`），或带 `Simple Browser` 的旧版
-  - 无法自动操作 VS Code 时会退回默认浏览器，不影响使用
 - 其它 agent / 环境：Codex CLI、普通终端、macOS/Linux 有 GUI → 默认浏览器；
   SSH / headless → 只打印 URL（可 `ssh -L 转发`）。也可用 `PDFVEC_PREVIEW=vscode|browser|none`
   强制指定，见下文「预览方式」
@@ -147,6 +137,3 @@ out/fig2/
   退回默认浏览器，headless 环境只打印 URL
 - 自动弹出 PowerPoint 仅 Windows（或 macOS/Linux 有默认程序）时生效，否则打印路径
 
-## License
-
-未指定。用于公开分发前请自行添加 LICENSE。

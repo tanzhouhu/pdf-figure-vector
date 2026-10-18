@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>PDF 图表重建预览（自动刷新）</title>
+<style>
+  html, body { margin: 0; background: #f3f3f3; }
+  #bar { font: 13px/1.6 "Microsoft YaHei", sans-serif; color: #666; padding: 6px 12px; }
+  #bar a { color: #888; margin-left: 12px; }
+  #wrap { padding: 10px; }
+  img { display: block; width: 100%; height: auto; background: #fff; }
+</style>
+</head>
+<body>
+<div id="bar">自动刷新中 · <span id="name">Figure.svg</span>
+  <a href="#" onclick="toggle();return false;" id="pause">暂停</a></div>
+<div id="wrap"><img id="fig" alt="figure"></div>
+<script>
+  var fig = document.getElementById('fig');
+  var nameEl = document.getElementById('name');
+  var paused = false;
+  function current() {
+    return new URLSearchParams(location.search).get('file') || 'Figure.svg';
+  }
+  function tick() {
+    if (paused) return;
+    var f = current();
+    nameEl.textContent = f;
+    fig.src = f + '?t=' + Date.now();
+  }
+  function toggle() {
+    paused = !paused;
+    document.getElementById('pause').textContent = paused ? '继续' : '暂停';
+  }
+  setInterval(tick, 500);
+</script>
+</body>
+</html>

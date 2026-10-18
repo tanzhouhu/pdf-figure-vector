@@ -1,0 +1,4 @@
+PyMuPDF>=1.24
+Pillow>=10.0
+python-pptx>=0.6.23
+fonttools>=4.40

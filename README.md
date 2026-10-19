@@ -1,5 +1,6 @@
 # pdf-figure-vector
-2026.10.19更新。
+2026.10.19晚20点更新：输出只保留 SVG/PPTX，删除垃圾文件。
+
 把学术 PDF 里的 Figure 原样复刻成**自包含矢量 SVG**和**可编辑 PPTX**；
 也可以把独立 PNG/JPG/WebP 图片自动描摹成矢量 SVG 和原生自由形状 PPTX，不会安装的话可以直接发指令agent帮你装。
 

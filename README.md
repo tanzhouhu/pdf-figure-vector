@@ -11,7 +11,9 @@
 Codex Skill 放到 `~/.codex/skills/pdf-figure-vector/`，或作为 Claude Code Skill 放到
 `~/.claude/skills/pdf-figure-vector/` 后，直接说「把这篇 PDF 的图 2 转成矢量图」即可，skill在运行过程中会自动跳转到浏览器展示可视化过程。
 
-最后希望大家觉得好用的话顺便点点star啦。另外大家可以在评论区提一些意见后续我将持续维护更新。
+对于WorkBuddy或其他 agent，目前没有测试和适配，能否使用取决于它是否支持 SKILL.md；不过脚本本身是可用的，所以建议作为可调用 Python 工具箱使用
+
+最后希望大家觉得好用的话顺便点点star啦。大家可以在评论区提一些意见，后续我将持续维护更新。
 
 
 ## 演示

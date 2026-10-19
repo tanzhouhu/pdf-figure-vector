@@ -344,6 +344,25 @@ python scripts\cleanup.py --out $out
 - 被页内裁切图（inline image）整块盖住的低置信 span 直接跳过输出：
   字形已由图片提供，再叠一个解不准的文本框只会露出来。
 
+**整串字形被映射成同一个字符 + 无 cmap 子集**
+- 有的 PDF（PowerPoint 导出的 CambriaMath 常见）把整段每个字形都映射成
+  同一个字符：`PoE`→`PPP`、`Sigmoid`→`SSSSSSS`、`concatenate`→`ccccccccc`。
+  码位全是正常字母，`_SUSPECT_CODES` 判不出来，`looks_broken()` 必须再加
+  一条「非空白字符全相同」；这段 PDF 还给每个字形塞了一个 `gid=-1` 的
+  零宽占位，判断前先按 `gid>=0` 过滤，否则正常的数学斜体 `q` 会被误判。
+- 同名字体可能有多个子集，其中一个（如 CambriaMath 252）**根本没有 cmap**：
+  `patch_subset_font()` 补表失败，`span_subset()` 也挑不到。这种子集不能丢——
+  字形轮廓还在，重打包成「U+E000+gid → 字形」的临时字体，按 texttrace 的
+  gid 渲染 64×64 掩膜，和系统 Cambria Math 候选字形比 IoU（≥0.70）反查真
+  字符；SVG 改用反查结果 + 系统字体渲染，PPTX 写 NFKC 折回后的字符。
+- gid 反查是唯一允许跨子集比较的场合：同一 gid 在不同子集是不同字形，逐字
+  取所有子集里 IoU 最高的那个；cmap 那条路仍只用 `span_subset()` 选定的子集。
+- `patch_subset_font()` 替换 `post` 表（format 3.0）后 fontTools 就拿不到
+  字形名了，`save()` 抛 `illegal use of getGlyphOrder()` 并把字体文件写坏。
+  必须在替换前 `getGlyphOrder()` 存一份、保存前 `setGlyphOrder()` 塞回去。
+- 没有 cmap 的子集即使补了 post/OS/2 也不要放进 `cv.font_faces`，
+  Chrome 的 OTS 照样会拒绝；但它仍要登记进 `self.subsets` 供 gid 反查用。
+
 **同名子集缓存不能跨 span 复用**
 - 缓存 key 必须包含 span 的字体、码位+gid 序列**以及 bbox 起点**。
   只按 (base, 码位, gid) 缓存时，先匹配的 `#` span 结果会被别的 span

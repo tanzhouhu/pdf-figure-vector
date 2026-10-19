@@ -1,4 +1,10 @@
+## 演示视频
+
+[![PDF Figure 原生矢量转换演示](assets/demo-cover.svg)]( https://v.douyin.com/TFUKuPcbWPo/ )
+
+
 # pdf-figure-vector
+
 2026.10.19晚20点更新：输出只保留 SVG/PPTX，删除垃圾文件。
 
 把学术 PDF 里的 Figure 原样复刻成**自包含矢量 SVG**和**可编辑 PPTX**；
@@ -7,6 +13,7 @@
 这个仓库同时是一个 [Claude Code](https://claude.com/claude-code)/Codex Skill。作为
 Codex Skill 放到 `~/.codex/skills/pdf-figure-vector/`，或作为 Claude Code Skill 放到
 `~/.claude/skills/pdf-figure-vector/` 后，直接说「把这篇 PDF 的图 2 转成矢量图」即可，最后希望大家觉得好用的话顺便点点star啦。另外大家可以在评论区提一些意见后续我将持续维护更新。
+
 
 ## 特点
 
@@ -20,9 +27,6 @@ Codex Skill 放到 `~/.codex/skills/pdf-figure-vector/`，或作为 Claude Code 
 - **PPTX 可编辑**：文字/形状/图片分别生成，自动校验是否为整张位图贴图
 - **自动清理**：生成结束后删掉 `assets/`、`fonts/`、诊断 PNG、调参脚本等中间产物，只留成品
 - **跨 agent**：Claude Code、Codex CLI、普通终端、SSH/headless 都能跑；预览按环境自动降级
-
-## 演示视频
-[点击观看抖音演示视频]( https://v.douyin.com/TFUKuPcbWPo/ )
 
 
 ## 环境要求

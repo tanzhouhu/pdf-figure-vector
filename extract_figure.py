@@ -300,22 +300,124 @@ _SYS_FONT_HINTS = {
     "candara": ("candara.ttf", 0),
 }
 
+# 字体族名在不同系统上可能重名或改名：按这些别名查字体文件里的 name 表
+_FAMILY_ALIASES = {
+    "cambriamath": ("cambria math",),
+    "cambria": ("cambria",),
+    "palatinolinotype": ("palatino linotype", "palatino"),
+    "timesnewroman": ("times new roman", "times"),
+    "arial": ("arial", "helvetica"),
+    "calibri": ("calibri", "carlito"),
+    "candara": ("candara",),
+}
+
+# 系统没有 Cambria Math 时（常见于 macOS），退而求其次的数学字体
+_MATH_FONT_FALLBACKS = ("stix two math", "latin modern math", "stix math")
+
+_FONT_INDEX = {}
+_FONT_INDEX_READY = False
+
+
+def _font_dirs():
+    """各系统放字体的目录（Windows / macOS / Linux 常见位置）。"""
+    home = os.path.expanduser("~")
+    if sys.platform == "win32":
+        return [os.path.join(os.environ.get("WINDIR", r"C:\Windows"), "Fonts")]
+    if sys.platform == "darwin":
+        return [os.path.join(home, "Library", "Fonts"),
+                "/Library/Fonts",
+                "/Library/Fonts/Microsoft",
+                "/System/Library/Fonts",
+                "/System/Library/Fonts/Supplemental"]
+    return [os.path.join(home, ".fonts"),
+            os.path.join(home, ".local", "share", "fonts"),
+            "/usr/share/fonts",
+            "/usr/local/share/fonts"]
+
+
+def _font_key(name):
+    return re.sub(r"[^a-z0-9]", "", (name or "").lower())
+
+
+def _index_font_names(tt, path, idx):
+    """把字体里声明的族名（name ID 1/4/16）登记进索引。"""
+    try:
+        names = tt["name"].names
+    except Exception:
+        return
+    for rec in names:
+        if rec.nameID not in (1, 4, 16):
+            continue
+        try:
+            k = _font_key(str(rec))
+        except Exception:
+            continue
+        if k:
+            _FONT_INDEX.setdefault(k, (path, idx))
+
+
+def _build_font_index():
+    """扫描字体目录，建「族名 → (文件, ttc 序号)」索引（只做一次）。"""
+    global _FONT_INDEX_READY
+    if _FONT_INDEX_READY:
+        return _FONT_INDEX
+    _FONT_INDEX_READY = True
+    try:
+        from fontTools.ttLib import TTCollection, TTFont
+    except Exception:
+        return _FONT_INDEX
+    for d in _font_dirs():
+        if not os.path.isdir(d):
+            continue
+        for root, _dirs, files in os.walk(d):
+            for fn in files:
+                low = fn.lower()
+                if not low.endswith((".ttf", ".otf", ".ttc")):
+                    continue
+                p = os.path.join(root, fn)
+                try:
+                    if low.endswith(".ttc"):
+                        for i, tt in enumerate(TTCollection(p, lazy=True).fonts):
+                            _index_font_names(tt, p, i)
+                    else:
+                        _index_font_names(TTFont(p, lazy=True), p, 0)
+                except Exception:
+                    continue
+    return _FONT_INDEX
+
 
 def system_font_path(family):
-    """按字体族名找系统字体文件，返回 (path, ttc_index) 或 None。"""
-    fonts_dir = os.path.join(os.environ.get("WINDIR", r"C:\Windows"), "Fonts")
-    key = re.sub(r"[^a-z0-9]", "", (family or "").lower())
-    if not key or not os.path.isdir(fonts_dir):
+    """按字体族名找系统字体文件，返回 (path, ttc_index) 或 None。
+
+    Windows 先按已知文件名找；macOS/Linux 的文件名不可靠，扫描字体目录
+    读 name 表匹配族名（结果缓存，只扫一次）。
+    """
+    key = _font_key(family)
+    if not key:
         return None
+    dirs = [d for d in _font_dirs() if os.path.isdir(d)]
     hint = _SYS_FONT_HINTS.get(key)
     if hint:
-        p = os.path.join(fonts_dir, hint[0])
-        if os.path.exists(p):
-            return p, hint[1]
-    for ext in (".ttf", ".otf", ".ttc"):
-        p = os.path.join(fonts_dir, key + ext)
-        if os.path.exists(p):
-            return p, 0
+        for d in dirs:
+            p = os.path.join(d, hint[0])
+            if os.path.exists(p):
+                return p, hint[1]
+    names = [key] + [_font_key(a) for a in _FAMILY_ALIASES.get(key, ())]
+    for d in dirs:
+        for name in names:
+            for ext in (".ttf", ".otf", ".ttc"):
+                p = os.path.join(d, name + ext)
+                if os.path.exists(p):
+                    return p, 0
+    index = _build_font_index()
+    for name in names:
+        if name in index:
+            return index[name]
+    if key == "cambriamath":
+        for alias in _MATH_FONT_FALLBACKS:
+            got = index.get(_font_key(alias))
+            if got:
+                return got
     return None
 
 
@@ -1089,6 +1191,10 @@ def main():
                     help="写完后不自动打开 PowerPoint（默认会自动弹出）")
     ap.add_argument("--no-clean", action="store_true",
                     help="保留 assets/、fonts/ 等中间产物（默认自动清理）")
+    ap.add_argument("--keep-qa", action="store_true",
+                    help="清理时保留 _qa/ 验收图")
+    ap.add_argument("--keep-preview", action="store_true",
+                    help="清理时保留 preview.html 和本地预览状态")
     a = ap.parse_args()
     bbox = tuple(float(v) for v in a.bbox.split(","))
     if len(bbox) != 4:
@@ -1115,8 +1221,13 @@ def main():
                             "--pptx", pptx])
 
     if not a.no_clean:
-        subprocess.run([sys.executable, os.path.join(HERE, "cleanup.py"),
-                        "--out", a.out])
+        cmd = [sys.executable, os.path.join(HERE, "cleanup.py"),
+               "--out", a.out]
+        if a.keep_qa:
+            cmd.append("--keep-qa")
+        if a.keep_preview:
+            cmd.append("--keep-preview")
+        subprocess.run(cmd)
 
 
 if __name__ == "__main__":

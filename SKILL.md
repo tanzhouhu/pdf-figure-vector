@@ -121,6 +121,9 @@ python scripts\trace_image.py --image Figure1.png `
 # 生成后把 PPTX 渲染出来和原图比 MAE
 --pptx-qa
 
+# 保留 _qa/ 验收图；默认只在临时目录计算，完成后删除
+--keep-qa
+
 # 生成后自动用 PowerPoint 打开验收
 --open-pptx
 
@@ -128,8 +131,9 @@ python scripts\trace_image.py --image Figure1.png `
 --name Figure2
 ```
 
-转换后会默认执行图像 vs SVG 对比，生成 `out\Figure1\_qa\_side.png` 与
-`_diff.png`，并打印 MAE。自动描摹是像素轮廓追踪，不是 OCR：
+转换后会默认执行图像 vs SVG 对比并打印 MAE，但对比图片放在临时目录，
+完成后自动删除。加 `--keep-qa` 才保留 `out\Figure1\_qa\`。自动描摹是
+像素轮廓追踪，不是 OCR：
 
 - 文字会变成路径，不能在 SVG 里直接改字。
 - 很小的文字、JPEG 压缩噪点和抗锯齿边缘可能变形；优先用高分辨率 PNG，
@@ -264,9 +268,10 @@ $p.Close(); $app.Quit()
 
 - 删 `assets/`、`fonts/`（内容已 base64 内嵌进 SVG，是冗余中间产物）
 - 删诊断文件：`_*.png/_*.py/_*.json/_*.log/_*.txt`、`patch_*.py`、
-  `fit_*.py`、**目录内所有 `*.png`**（对比图/放大图/网格图都是中间产物）、
-  `__pycache__/`、`.preview.json`
-- 保留 `*.svg`、`*.pptx`、`preview.html`、以及其它脚本（如手工重绘的 `redraw.py`）
+  `fit_*.py`、**目录内所有 `*.png`**、`_qa/`、`preview.html`、
+  `.preview.json`、`__pycache__/`
+- 默认只保留 `*.svg` 和 `*.pptx`；加 `--keep-qa` 保留验收图，
+  加 `--keep-preview` 保留预览页
 - 不动 `~$*.pptx`（PowerPoint 锁文件，关掉 PPT 自动消失）
 
 需要留素材重跑时加 `--no-clean`。单独手动清理，想先看会删什么：
@@ -287,8 +292,10 @@ python scripts\cleanup.py --out $out
 4. 打开 PPTX 抽查：任取几个线条、箭头、公式文字，能单独选中和编辑。
 5. 检查 SVG/PPTX 没有带入页眉、页脚或 Figure caption。
 6. 检查文件名、页面 bbox、模型图和图注对应关系，避免导错 Figure。
-7. 独立图片：确认 SVG 有矢量路径、没有 `<image>`；查看 `_qa\_side.png`
-   与 `_diff.png`。文字已转成路径时，不承诺还能直接编辑文字。
+7. 独立图片：确认 SVG 有矢量路径、没有 `<image>`，并确认 PPTX 使用
+   `FREEFORM`、位图数为 0。默认 QA 图会删除；需要留档时加 `--keep-qa`
+   再检查 `_qa\_side.png`、`_diff.png`、`_ppt_side.png` 与 `_ppt_diff.png`。
+   文字已转成路径时，不承诺还能直接编辑文字。
 
 曲线不够顺滑时不要接受“像素 MAE 低但放大有折角”。先把
 `--curve-steps` 提到 32–64，并把 `--simplify-eps` 降到 0.004–0.008，
@@ -540,8 +547,11 @@ python scripts\compare_pptx.py --pdf p.pdf --page 3 `
 python scripts\verify_pptx.py --pptx out\Fig2.pptx
 python scripts\open_pptx.py --pptx out\Fig2.pptx
 
-# 清理中间产物
+# 清理中间产物，默认只留 SVG/PPTX
 python scripts\cleanup.py --out out
+
+# 显式保留验收图或预览页
+python scripts\cleanup.py --out out --keep-qa --keep-preview
 ```
 
 `--bbox` 顺序 `x0,y0,x1,y1`（pt），`--page` 0 起，`--width` 默认 1948。

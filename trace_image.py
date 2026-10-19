@@ -185,8 +185,7 @@ def load_source_for_qa(source, max_width):
     return source_img
 
 
-def quality_check(source, svg, out, max_width, chrome_path):
-    qa_dir = os.path.join(out, "_qa")
+def quality_check(source, svg, qa_dir, max_width, chrome_path):
     os.makedirs(qa_dir, exist_ok=True)
 
     source_img = load_source_for_qa(source, max_width)
@@ -309,6 +308,11 @@ def main():
         action="store_true",
         help="open the generated PPTX after conversion",
     )
+    ap.add_argument(
+        "--keep-qa",
+        action="store_true",
+        help="keep source/SVG/PPTX comparison images in out/_qa",
+    )
     ap.add_argument("--no-qa", action="store_true", help="skip image-vs-SVG QA")
     ap.add_argument("--qa-width", type=int, default=2000)
     ap.add_argument("--chrome", help="Chrome/Chromium path for QA")
@@ -386,12 +390,17 @@ def main():
         if image_count:
             print("warning: output still contains embedded raster images")
 
+        qa_dir = (
+            os.path.join(out, "_qa")
+            if args.keep_qa
+            else os.path.join(temp, "qa")
+        )
         if not args.no_qa:
             try:
                 mae, qa_dir = quality_check(
                     prepared,
                     svg_path,
-                    out,
+                    qa_dir,
                     max(256, args.qa_width),
                     args.chrome,
                 )
@@ -417,7 +426,6 @@ def main():
                 raise SystemExit("PPTX generation failed: %s" % exc) from exc
 
             if args.pptx_qa:
-                qa_dir = os.path.join(out, "_qa")
                 try:
                     pptx_mae = quality_check_pptx(
                         prepared,
@@ -431,6 +439,11 @@ def main():
                     )
                 except (Exception, SystemExit) as exc:
                     print("PPTX QA skipped: %s" % exc)
+
+        if args.keep_qa and os.path.isdir(qa_dir):
+            print("QA files kept: %s" % qa_dir)
+        elif os.path.isdir(qa_dir):
+            print("QA files cleaned automatically")
 
     if args.preview:
         cmd = [

@@ -1,6 +1,3 @@
-## 演示视频
-
-[![PDF Figure 原生矢量转换演示](assets/demo-cover.svg)]( https://v.douyin.com/TFUKuPcbWPo/ )
 
 
 # pdf-figure-vector
@@ -13,6 +10,15 @@
 这个仓库同时是一个 [Claude Code](https://claude.com/claude-code)/Codex Skill。作为
 Codex Skill 放到 `~/.codex/skills/pdf-figure-vector/`，或作为 Claude Code Skill 放到
 `~/.claude/skills/pdf-figure-vector/` 后，直接说「把这篇 PDF 的图 2 转成矢量图」即可，最后希望大家觉得好用的话顺便点点star啦。另外大家可以在评论区提一些意见后续我将持续维护更新。
+
+
+## 演示视频
+
+<p align="center">
+  <img src="assets/demo-cover.svg" alt="PDF 原生矢量转换演示" width="100%">
+</p>
+
+[点击观看抖音演示视频]( https://v.douyin.com/TFUKuPcbWPo/ )
 
 
 ## 特点

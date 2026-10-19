@@ -21,6 +21,10 @@ Codex Skill 放到 `~/.codex/skills/pdf-figure-vector/`，或作为 Claude Code 
 - **自动清理**：生成结束后删掉 `assets/`、`fonts/`、诊断 PNG、调参脚本等中间产物，只留成品
 - **跨 agent**：Claude Code、Codex CLI、普通终端、SSH/headless 都能跑；预览按环境自动降级
 
+## 演示视频
+[点击观看抖音演示视频]( https://v.douyin.com/TFUKuPcbWPo/ )
+
+
 ## 环境要求
 
 - Python 3.9+

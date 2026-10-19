@@ -5,11 +5,13 @@
 2026.10.19晚20点更新：输出只保留 SVG/PPTX，删除垃圾文件。
 
 把学术 PDF 里的 Figure 原样复刻成**自包含矢量 SVG**和**可编辑 PPTX**；
-也可以把独立 PNG/JPG/WebP 图片自动描摹成矢量 SVG 和原生自由形状 PPTX，下载好后可以直接发指令agent帮你操作。
+也可以把独立 PNG/JPG/WebP 图片自动描摹成矢量 SVG 和原生自由形状 PPTX。
 
 这个仓库同时是一个 [Claude Code](https://claude.com/claude-code)/Codex Skill。作为
 Codex Skill 放到 `~/.codex/skills/pdf-figure-vector/`，或作为 Claude Code Skill 放到
-`~/.claude/skills/pdf-figure-vector/` 后，直接说「把这篇 PDF 的图 2 转成矢量图」即可，最后希望大家觉得好用的话顺便点点star啦。另外大家可以在评论区提一些意见后续我将持续维护更新。
+`~/.claude/skills/pdf-figure-vector/` 后，直接说「把这篇 PDF 的图 2 转成矢量图」即可，skill在运行过程中回自动跳转到浏览器展示可视化过程。
+
+最后希望大家觉得好用的话顺便点点star啦。另外大家可以在评论区提一些意见后续我将持续维护更新。
 
 
 ## 演示

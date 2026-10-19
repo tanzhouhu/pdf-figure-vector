@@ -38,19 +38,32 @@ _SUSPECT_CODES = (set(range(0x21, 0x30)) | set(range(0x3A, 0x41))
                   | {0x00B7, 0x00B0, 0x00A0, 0x00AD, 0x2019})
 
 
-def looks_broken(text):
+def looks_broken(text, eff_text=None):
     """span 里出现可疑标点码位，可能是 ToUnicode 把字形映射错了。
 
     '#'、'!' 常是下标 0/1，'·'(U+00B7) 之类也会混进来。短 span 有一个
     可疑字符就试；整串下标（如 'overall' 被映射成 "$%&'())"）字符多但
     一半以上都可疑，也试。解出来和原文一样就不动。
+
+    还有一种坏法：整个 span 的每个字形都被映射成同一个字符
+    （'PoE' → 'PPP'，'concat' → 'cccccc'），码位本身是正常字母，
+    只能靠「非空白字符全相同」识别。
     """
     if not text:
         return False
     n_sus = sum(ord(c) in _SUSPECT_CODES for c in text)
-    if len(text) <= 6:
-        return n_sus > 0
-    return len(text) <= 24 and n_sus * 2 >= len(text)
+    if len(text) <= 6 and n_sus > 0:
+        return True
+    if len(text) <= 24 and n_sus * 2 >= len(text):
+        return True
+    # 这段 PDF 常给每个字形额外塞一个 gid=-1 的重复占位，判断「整串同
+    # 字符」时要看真正有字形的那些（eff_text），否则每个 'q' 都会被误判。
+    src = eff_text if eff_text is not None else text
+    letters = [c for c in src if not c.isspace()]
+    if (len(letters) >= 2 and len(set(letters)) == 1
+            and letters[0] not in ".·⋅⋯…-_"):
+        return True
+    return False
 
 
 def bbox_of(pts):
@@ -202,12 +215,21 @@ def patch_subset_font(path, bold):
     from fontTools.ttLib.tables._c_m_a_p import CmapSubtable
 
     f = TTFont(path)
-    cmap = f["cmap"]
-    if not any(t.platformID == 3 and t.platEncID == 1 for t in cmap.tables):
-        sub = CmapSubtable.newSubtable(4)
-        sub.platformID, sub.platEncID, sub.language = 3, 1, 0
-        sub.cmap = dict(cmap.tables[0].cmap)
-        cmap.tables.append(sub)
+    # 换掉 post 表后 fontTools 就再也拿不到字形名（format 3.0 不存名字），
+    # 保存时会抛 "illegal use of getGlyphOrder()" 并把文件写坏。先记下来。
+    try:
+        order = f.getGlyphOrder()
+    except Exception:
+        order = None
+    # 没有 cmap 的子集（PowerPoint 导出的 CambriaMath 常见）补不出
+    # Windows 子表，但仍然要补 post/OS/2：字形轮廓还能按 gid 用。
+    if "cmap" in f:
+        cmap = f["cmap"]
+        if not any(t.platformID == 3 and t.platEncID == 1 for t in cmap.tables):
+            sub = CmapSubtable.newSubtable(4)
+            sub.platformID, sub.platEncID, sub.language = 3, 1, 0
+            sub.cmap = dict(cmap.tables[0].cmap)
+            cmap.tables.append(sub)
     # 子集常常没有 post 表，或 format 2 的 stringData 长度对不上；
     # Chrome 的 OTS 会直接拒绝整个字体（post: missing required table）。
     post = newTable("post")
@@ -221,6 +243,8 @@ def patch_subset_font(path, bold):
     post.minMemType1 = 0
     post.maxMemType1 = 0
     f["post"] = post
+    if order:
+        f.setGlyphOrder(order)
     if "OS/2" not in f:
         head, hhea = f["head"], f["hhea"]
         em = head.unitsPerEm
@@ -276,22 +300,124 @@ _SYS_FONT_HINTS = {
     "candara": ("candara.ttf", 0),
 }
 
+# 字体族名在不同系统上可能重名或改名：按这些别名查字体文件里的 name 表
+_FAMILY_ALIASES = {
+    "cambriamath": ("cambria math",),
+    "cambria": ("cambria",),
+    "palatinolinotype": ("palatino linotype", "palatino"),
+    "timesnewroman": ("times new roman", "times"),
+    "arial": ("arial", "helvetica"),
+    "calibri": ("calibri", "carlito"),
+    "candara": ("candara",),
+}
+
+# 系统没有 Cambria Math 时（常见于 macOS），退而求其次的数学字体
+_MATH_FONT_FALLBACKS = ("stix two math", "latin modern math", "stix math")
+
+_FONT_INDEX = {}
+_FONT_INDEX_READY = False
+
+
+def _font_dirs():
+    """各系统放字体的目录（Windows / macOS / Linux 常见位置）。"""
+    home = os.path.expanduser("~")
+    if sys.platform == "win32":
+        return [os.path.join(os.environ.get("WINDIR", r"C:\Windows"), "Fonts")]
+    if sys.platform == "darwin":
+        return [os.path.join(home, "Library", "Fonts"),
+                "/Library/Fonts",
+                "/Library/Fonts/Microsoft",
+                "/System/Library/Fonts",
+                "/System/Library/Fonts/Supplemental"]
+    return [os.path.join(home, ".fonts"),
+            os.path.join(home, ".local", "share", "fonts"),
+            "/usr/share/fonts",
+            "/usr/local/share/fonts"]
+
+
+def _font_key(name):
+    return re.sub(r"[^a-z0-9]", "", (name or "").lower())
+
+
+def _index_font_names(tt, path, idx):
+    """把字体里声明的族名（name ID 1/4/16）登记进索引。"""
+    try:
+        names = tt["name"].names
+    except Exception:
+        return
+    for rec in names:
+        if rec.nameID not in (1, 4, 16):
+            continue
+        try:
+            k = _font_key(str(rec))
+        except Exception:
+            continue
+        if k:
+            _FONT_INDEX.setdefault(k, (path, idx))
+
+
+def _build_font_index():
+    """扫描字体目录，建「族名 → (文件, ttc 序号)」索引（只做一次）。"""
+    global _FONT_INDEX_READY
+    if _FONT_INDEX_READY:
+        return _FONT_INDEX
+    _FONT_INDEX_READY = True
+    try:
+        from fontTools.ttLib import TTCollection, TTFont
+    except Exception:
+        return _FONT_INDEX
+    for d in _font_dirs():
+        if not os.path.isdir(d):
+            continue
+        for root, _dirs, files in os.walk(d):
+            for fn in files:
+                low = fn.lower()
+                if not low.endswith((".ttf", ".otf", ".ttc")):
+                    continue
+                p = os.path.join(root, fn)
+                try:
+                    if low.endswith(".ttc"):
+                        for i, tt in enumerate(TTCollection(p, lazy=True).fonts):
+                            _index_font_names(tt, p, i)
+                    else:
+                        _index_font_names(TTFont(p, lazy=True), p, 0)
+                except Exception:
+                    continue
+    return _FONT_INDEX
+
 
 def system_font_path(family):
-    """按字体族名找系统字体文件，返回 (path, ttc_index) 或 None。"""
-    fonts_dir = os.path.join(os.environ.get("WINDIR", r"C:\Windows"), "Fonts")
-    key = re.sub(r"[^a-z0-9]", "", (family or "").lower())
-    if not key or not os.path.isdir(fonts_dir):
+    """按字体族名找系统字体文件，返回 (path, ttc_index) 或 None。
+
+    Windows 先按已知文件名找；macOS/Linux 的文件名不可靠，扫描字体目录
+    读 name 表匹配族名（结果缓存，只扫一次）。
+    """
+    key = _font_key(family)
+    if not key:
         return None
+    dirs = [d for d in _font_dirs() if os.path.isdir(d)]
     hint = _SYS_FONT_HINTS.get(key)
     if hint:
-        p = os.path.join(fonts_dir, hint[0])
-        if os.path.exists(p):
-            return p, hint[1]
-    for ext in (".ttf", ".otf", ".ttc"):
-        p = os.path.join(fonts_dir, key + ext)
-        if os.path.exists(p):
-            return p, 0
+        for d in dirs:
+            p = os.path.join(d, hint[0])
+            if os.path.exists(p):
+                return p, hint[1]
+    names = [key] + [_font_key(a) for a in _FAMILY_ALIASES.get(key, ())]
+    for d in dirs:
+        for name in names:
+            for ext in (".ttf", ".otf", ".ttc"):
+                p = os.path.join(d, name + ext)
+                if os.path.exists(p):
+                    return p, 0
+    index = _build_font_index()
+    for name in names:
+        if name in index:
+            return index[name]
+    if key == "cambriamath":
+        for alias in _MATH_FONT_FALLBACKS:
+            got = index.get(_font_key(alias))
+            if got:
+                return got
     return None
 
 
@@ -346,6 +472,8 @@ class FigureBuilder:
         self.span_font = {}
         self.span_score = {}
         self.glyph_dec = {}
+        self.gid_fonts = {}
+        self.gid_dec = {}
         self.cand_masks = {}
         self.sys_fonts = {}
         self.clip = fitz.Rect(self.X0 - 0.5, self.Y0 - 0.5,
@@ -421,11 +549,25 @@ class FigureBuilder:
                     order = tt.getGlyphOrder()
                 except Exception as e:  # 损坏的子集就跳过
                     print("font patch failed:", base, xref, e)
+                    # 有些子集（PowerPoint 导出的 CambriaMath 常见）没有
+                    # cmap，补表必失败，但字形轮廓仍然可用：照样登记，
+                    # 让按 gid 反查真字符的路径能用；不进 cv.font_faces，
+                    # Chrome 那边仍回退系统字体。
+                    try:
+                        from fontTools.ttLib import TTFont
+                        tt = TTFont(path)
+                        order = tt.getGlyphOrder()
+                    except Exception:
+                        continue
+                    subs.append(dict(fam=fam, path=path, cmap={}, gid={},
+                                     size=len(buf), base=base, xref=xref))
                     continue
                 gid = {u: order.index(n) for u, n in cmap.items()}
                 subs.append(dict(fam=fam, path=path, cmap=cmap, gid=gid,
-                                 size=len(buf), base=base))
-                cv.font_faces.append((fam, path))
+                                 size=len(buf), base=base, xref=xref))
+                # 没有 cmap 的子集内嵌给 Chrome 也会被 OTS 拒绝，别放进去
+                if cmap:
+                    cv.font_faces.append((fam, path))
             if not subs:
                 continue
             self.subsets[base.lower()] = subs
@@ -573,6 +715,89 @@ class FigureBuilder:
                           % (ch, dec, best[0]))
         self.glyph_dec[key] = res
         return res
+
+    @staticmethod
+    def _codes_repeat(sp):
+        """span 的码位是否互相重复（字形靠 gid 才能区分）。"""
+        chars = [c for c in sp["chars"] if c[0] and c[1] >= 0]
+        codes = [c[0] for c in chars if not chr(c[0]).isspace()]
+        return len(codes) >= 2 and len(set(codes)) < len(codes)
+
+    def gid_font(self, sub):
+        """把子集字体重打包成「U+E000+gid → 字形」的临时字体。
+
+        有的子集（常见于 PowerPoint 导出的 CambriaMath）完全没有 cmap，
+        既不能内嵌给 Chrome，也不能用码位渲染；但按 gid 取字形仍可用。
+        """
+        key = sub.get("xref") or abs(hash(sub.get("path", ""))) % 10**8
+        if key in self.gid_fonts:
+            return self.gid_fonts[key]
+        fnt = None
+        try:
+            from fontTools.ttLib import TTFont
+            from fontTools.ttLib.tables._c_m_a_p import (
+                CmapSubtable, table__c_m_a_p)
+            t = TTFont(sub["path"])
+            names = t.getGlyphOrder()
+            cm = CmapSubtable.newSubtable(4)
+            cm.platformID, cm.platEncID, cm.language = 3, 1, 0
+            cm.cmap = {0xE000 + i: n for i, n in enumerate(names)}
+            cmap = table__c_m_a_p()
+            cmap.tableVersion = 0
+            cmap.tables = [cm]
+            t["cmap"] = cmap
+            path = os.path.join(self.assets, "gid_%s.ttf" % key)
+            t.save(path)
+            fnt = ImageFont.truetype(path, 128)
+        except Exception as e:
+            print("gid font failed: %s %s" % (sub.get("base"), e))
+        self.gid_fonts[key] = fnt
+        return fnt
+
+    def decode_gid(self, sub, gid):
+        """按字形号反查真字符（返回原始数学字符, 置信度）。"""
+        key = (sub.get("fam"), gid)
+        if key in self.gid_dec:
+            return self.gid_dec[key]
+        res = ("", 0.0)
+        fnt = self.gid_font(sub)
+        sysf = self.system_font(sub)
+        if fnt is not None and sysf is not None and gid < 0x1100:
+            tm = glyph_mask(chr(0xE000 + gid), fnt)
+            if tm is not None:
+                best = (0.0, "")
+                for cand in self.decode_candidates():
+                    s = mask_iou(tm, self.cand_mask(cand, sysf))
+                    if s > best[0]:
+                        best = (s, cand)
+                if best[0] >= 0.70:
+                    res = (best[1], best[0])
+        self.gid_dec[key] = res
+        return res
+
+    def decode_span_gid(self, sp, subs):
+        """逐字形按 gid 反查，返回 (文本, 最低置信度)。
+
+        码位不可信时（整串同字符、或者子集根本没有 cmap）只能走这条路。
+        同一 gid 在不同子集里是不同字形，所以逐字取所有子集里最像的那个。
+        """
+        out, confs = [], []
+        for c in sp["chars"]:
+            if not c[0] or c[1] < 0:
+                continue
+            ch = chr(c[0])
+            if ch.isspace():
+                out.append(ch)
+                confs.append(1.0)
+                continue
+            best = ("", 0.0)
+            for sub in subs:
+                got, score = self.decode_gid(sub, c[1])
+                if score > best[1]:
+                    best = (got, score)
+            out.append(best[0] or ch)
+            confs.append(best[1])
+        return "".join(out), (min(confs) if confs else 0.0)
 
     def system_font(self, sub):
         fam = pptx_family(sub["base"])  # 子集名 → 系统近似族
@@ -801,27 +1026,61 @@ class FigureBuilder:
             # 有些 PDF 的 ToUnicode 是坏的（下标被映射成 '!'/'"'）：SVG 用
             # 子集字体能画对，PPTX 得按字形反查出真字符，否则复制出来是乱码。
             pptx_text = None
-            if sub and looks_broken(text):
-                dec, conf = self.decode_span(sp, sub)
+            sys_text = None
+            eff_text = "".join(chr(c[0]) for c in sp["chars"]
+                               if c[0] and c[1] >= 0)
+            if looks_broken(text, eff_text):
+                base = (sp.get("font") or "").split("+")[-1].lower()
+                subs = list(self.subsets.get(base) or [])
+                if sub and sub not in subs:
+                    subs.insert(0, sub)
+                dec, conf = ("", 0.0)
+                # 整串同字符 / 子集没有 cmap：码位完全不可信，只能按 gid 查
+                if self._codes_repeat(sp) or sub is None:
+                    dec, conf = self.decode_span_gid(sp, subs)
+                elif sub:
+                    dec, conf = self.decode_span(sp, sub)
                 if conf >= 0.70:
-                    # 括号/逗号/等号这些公式里的常用真字符，只在子集与页面
-                    # 对得很准时才改写；否则宁可信原文，别把 '(' 改成 'l'。
-                    shaky = self.span_score.get(self.span_key(sp), 0.0) < 0.45
-                    common = set("()[]{},.=+-/:;<>?")
-                    fixed = "".join(
-                        (d if not (o in common and shaky) else o)
-                        for o, d in zip(text, dec))
-                    if fixed != text:
-                        pptx_text = fixed
-                elif covered_by_image(sp["bbox"]):
+                    if sub is None:
+                        # 子集连 cmap 都没有，SVG 也没法按码位渲染——用反查
+                        # 出的数学字符配系统字体（Cambria Math 自带这些字形）。
+                        text = dec
+                        fam = pptx_family(sp["font"])
+                        sys_text = True
+                        pptx_text = unicodedata.normalize("NFKC", dec)
+                    elif len(dec) == len(text):
+                        # 括号/逗号/等号这些公式里的常用真字符，只在子集与
+                        # 页面对得很准时才改写；否则宁可信原文。
+                        shaky = (self.span_score.get(
+                            self.span_key(sp), 0.0) < 0.45)
+                        common = set("()[]{},.=+-/:;<>?")
+                        fixed = "".join(
+                            (d if not (o in common and shaky) else o)
+                            for o, d in zip(text, dec))
+                        if fixed != text:
+                            pptx_text = fixed
+                    else:
+                        # 原始码位带 gid=-1 的重复占位，长度对不上
+                        pptx_text = unicodedata.normalize("NFKC", dec)
+                elif sub and covered_by_image(sp["bbox"]):
                     # 这个小下标整块被页面裁切图盖住，字形已由图片提供；
                     # 再叠一个解不准的文本框只会露出来。
                     return
             bold = ("bold" in sp["font"].lower()
                     or bool(sp["flags"] & 16))
-            ox, oy = sp["chars"][0][2]
-            gx = [self.T(c[2][0]) for c in sp["chars"] if c[0]]
-            gy = [self.U(c[2][1]) for c in sp["chars"] if c[0]]
+            if sys_text:
+                # 按 gid 反查出的 span 的 chars 里有 gid=-1 的重复占位，
+                # 真正的字形每个只出现一次。
+                draw_chars = [c for c in sp["chars"]
+                              if c[0] and c[1] >= 0]
+                if len(draw_chars) != len(text):
+                    draw_chars = [c for c in sp["chars"] if c[0]]
+                bold = False
+            else:
+                draw_chars = [c for c in sp["chars"] if c[0]]
+            ox, oy = draw_chars[0][2]
+            gx = [self.T(c[2][0]) for c in draw_chars]
+            gy = [self.U(c[2][1]) for c in draw_chars]
             # 竖排 / 倾斜文字：dir 不是 (1,0)，每个字形绕自身原点旋转
             dx, dy = sp.get("dir") or (1.0, 0.0)
             rot = 0.0
@@ -829,7 +1088,8 @@ class FigureBuilder:
                 rot = math.degrees(math.atan2(dy, dx))
             cv.text(
                 self.T(ox), self.U(oy) - 0.32 * size, text, size=size,
-                bold=bold, italic=bool(sp["flags"] & 2),
+                bold=bold,
+                italic=(False if sys_text else bool(sp["flags"] & 2)),
                 color=hexcol(tuple(sp["color"])), anchor="left",
                 family=fam, pptx_family=pptx_family(sp["font"]),
                 svg_weight=("normal" if fam.startswith("PF") else None),
@@ -931,6 +1191,10 @@ def main():
                     help="写完后不自动打开 PowerPoint（默认会自动弹出）")
     ap.add_argument("--no-clean", action="store_true",
                     help="保留 assets/、fonts/ 等中间产物（默认自动清理）")
+    ap.add_argument("--keep-qa", action="store_true",
+                    help="清理时保留 _qa/ 验收图")
+    ap.add_argument("--keep-preview", action="store_true",
+                    help="清理时保留 preview.html 和本地预览状态")
     a = ap.parse_args()
     bbox = tuple(float(v) for v in a.bbox.split(","))
     if len(bbox) != 4:
@@ -957,8 +1221,13 @@ def main():
                             "--pptx", pptx])
 
     if not a.no_clean:
-        subprocess.run([sys.executable, os.path.join(HERE, "cleanup.py"),
-                        "--out", a.out])
+        cmd = [sys.executable, os.path.join(HERE, "cleanup.py"),
+               "--out", a.out]
+        if a.keep_qa:
+            cmd.append("--keep-qa")
+        if a.keep_preview:
+            cmd.append("--keep-preview")
+        subprocess.run(cmd)
 
 
 if __name__ == "__main__":

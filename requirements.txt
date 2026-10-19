@@ -1,4 +1,6 @@
 PyMuPDF>=1.24
 Pillow>=10.0
+numpy>=1.24
 python-pptx>=0.6.23
 fonttools>=4.40
+vtracer>=0.6.15

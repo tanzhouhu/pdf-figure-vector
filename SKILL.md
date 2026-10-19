@@ -1,12 +1,14 @@
 ---
 name: pdf-figure-vector
-description: 把学术 PDF 里的图（Figure）原样复刻成矢量 SVG + 可编辑 PPTX。当用户要求「把论文这张图转成矢量 / 转成 PPT / 复刻 PDF 的图 / 提取 Figure」时使用。要点：逐元素边画边刷新预览，让用户看着图一层层长出来；字体从 PDF 内嵌；Chrome 截图与 PDF 逐像素比对。
+description: 把学术 PDF 图表或独立 PNG/JPG/WebP 图片复刻成矢量 SVG，并可为 PDF 输出可编辑 PPTX。当用户要求「把论文这张图转成矢量 / 把图片转 SVG / 图片转矢量 / 复刻 PDF 的图 / 提取 Figure」时使用。要点：PDF 优先逐元素重建，独立位图用 VTracer 自动描摹；两者都提供预览与图像对比验收。
 ---
 
-# PDF 图表转矢量 SVG / PPTX
+# PDF 图表与位图转矢量 SVG / PPTX
 
 把 PDF 里的某张图按原始绘制顺序重建成 SVG（矢量路径 + 内嵌字体子集 + 原位图片），
 同时导出元素可编辑的 PPTX。目标是和 PDF 逐像素接近（正常 MAE < 10/255）。
+独立 PNG/JPG/WebP/BMP/TIFF 也可以直接描摹成只含矢量路径的 SVG；这种自动描摹
+不还原可编辑文字，文字会变成路径。
 
 ## 目录
 
@@ -14,6 +16,8 @@ description: 把学术 PDF 里的图（Figure）原样复刻成矢量 SVG + 可�
 scripts/
   probe.py            # 探查页面：尺寸、位图 bbox、矢量范围、文字块；--bbox 判断位图/矢量
   extract_figure.py   # 主脚本：抽取并重建 SVG/PPTX
+  trace_image.py      # 独立位图：PNG/JPG/WebP/BMP/TIFF → 矢量 SVG + PPTX
+  svg_to_pptx.py      # 把描摹出的 SVG 路径转成 PPTX 原生自由形状
   vd_canvas.py        # Canvas 后端（SVG + PPTX 输出），勿改
   compare.py          # PDF 渲染 vs Chrome 截图，出 MAE 与差异图
   compare_pptx.py     # PowerPoint 导出 PNG vs PDF，出 MAE 与差异图
@@ -28,8 +32,15 @@ scripts/
 ## 环境
 
 用当前环境的 Python（下文命令里的 `python` 指你自己的解释器）。依赖见
-`requirements.txt`：`PyMuPDF`、`Pillow`、`python-pptx`、`fontTools`。
-缺什么就 `pip install -r requirements.txt`。
+`requirements.txt`：`PyMuPDF`、`Pillow`、`numpy`、`python-pptx`、`fontTools`、
+`vtracer`。缺什么就 `pip install -r requirements.txt`。
+
+Windows / macOS / Linux 都能跑。系统字体查找会按平台扫各自的字体目录
+（Windows `%WINDIR%\Fonts`；macOS `~/Library/Fonts`、`/Library/Fonts`、
+`/Library/Fonts/Microsoft`、`/System/Library/Fonts`；Linux `~/.fonts`、
+`~/.local/share/fonts`、`/usr/share/fonts`），文件名对不上时读字体的
+name 表匹配族名。macOS 通常没有 Cambria Math，坏字体的逐字反查会自动
+退到 STIX/Latin Modern Math；都找不到时置信度不够就不改写原文（不会更糟）。
 
 下面命令都假设当前目录是 skill 根目录（`scripts/` 的上一级）。
 
@@ -53,6 +64,8 @@ scripts/
   Linux `xdg-open`；无 GUI 或启动失败时只打印文件路径，不抛异常。
 - `compare.py`：需要 Chrome/Chromium/Edge，常见安装路径 + `shutil.which` 都会找。
 - `extract_figure.py` / `probe.py` / `vd_canvas.py`：纯 Python + PyMuPDF，跨平台。
+- `trace_image.py` / `svg_to_pptx.py`：Pillow + VTracer + python-pptx；
+  QA 需要 Chrome/Chromium/Edge，PPTX 渲染验收还需要 PowerPoint 或 LibreOffice。
 - `vscode_preview.ps1`：仅 Windows + VS Code 使用，其它环境不会被调用。
 
 连浏览器都打不开的纯服务器：直接用 `scp` 把 SVG/PPTX 拿回本地看；
@@ -60,7 +73,7 @@ scripts/
 
 **双端同步（Claude Code ↔ Codex）**
 
-这份 skill 在 Claude Code 和 Codex 两边都会改，且不是 git 仓库。
+这份 skill 在 Claude Code 和 Codex 两边都会改；Codex 侧可能已经初始化为 Git 仓库。
 
 - 两份位置：`~/.claude/skills/pdf-figure-vector` 与 `~/.codex/skills/pdf-figure-vector`。
 - 动手改 `scripts/` 前先看文件修改时间/内容，确认没有吞掉另一侧刚做的改动。
@@ -70,7 +83,62 @@ scripts/
   有差异先逐文件 diff 确认是不是对方的新改动，再决定合并方向，并留备份。
 - 每次改动在下方「坑清单」补一条；另一侧同步时按条目核对。
 
-## 工作流程（严格照做）
+## 独立 PNG/JPG 转换
+
+用户给的是独立图片时，不要伪造 PDF 再走 `extract_figure.py`；直接用
+`trace_image.py`：
+
+```powershell
+python scripts\trace_image.py --image Figure1.png `
+    --out out\Figure1 --preset diagram --preview
+```
+
+支持的输入：PNG、JPG/JPEG、WebP、BMP、TIFF。输出是只含矢量路径的 SVG，
+并默认再用 `svg_to_pptx.py` 生成一份路径可单独选中的 PPTX；默认 `diagram`
+预设适合框架图、流程图和示意图。
+
+预设选择：
+
+- `diagram`：默认；保留彩色图层和细节，适合论文示意图、流程图、UI 图。
+- `logo`：二值描摹；适合黑白 logo、线稿、印章、单色图标。
+- `photo`：彩色照片近似描摹；路径多、文件大，不适合追求干净可编辑结构。
+
+常用选项：
+
+```powershell
+# 小图默认自动放大到 2x；文字较小也可显式放大
+--scale 2
+
+# 保留透明背景；默认 white 会把透明区合成到白底
+--background transparent
+
+# 跳过 Chrome 图像对比
+--no-qa
+
+# 只要 SVG，不生成 PPTX
+--no-pptx
+
+# 生成后把 PPTX 渲染出来和原图比 MAE
+--pptx-qa
+
+# 生成后自动用 PowerPoint 打开验收
+--open-pptx
+
+# 指定输出文件名（不含 .svg）
+--name Figure2
+```
+
+转换后会默认执行图像 vs SVG 对比，生成 `out\Figure1\_qa\_side.png` 与
+`_diff.png`，并打印 MAE。自动描摹是像素轮廓追踪，不是 OCR：
+
+- 文字会变成路径，不能在 SVG 里直接改字。
+- 很小的文字、JPEG 压缩噪点和抗锯齿边缘可能变形；优先用高分辨率 PNG，
+  或提供 `--scale 2`。
+- 如果要求文字仍可编辑、结构仍可单独操作，改走下文「图本身是位图时：
+  手工重绘成真矢量」。
+- 照片、渐变、复杂纹理自动描摹只能近似；不要承诺还原原始摄影细节。
+
+## PDF 图表工作流程（严格照做）
 
 用户明确要求「看着画出来」。**先开预览窗口，再逐元素生成**，不要憋到最后才给成品。
 
@@ -219,6 +287,8 @@ python scripts\cleanup.py --out $out
 4. 打开 PPTX 抽查：任取几个线条、箭头、公式文字，能单独选中和编辑。
 5. 检查 SVG/PPTX 没有带入页眉、页脚或 Figure caption。
 6. 检查文件名、页面 bbox、模型图和图注对应关系，避免导错 Figure。
+7. 独立图片：确认 SVG 有矢量路径、没有 `<image>`；查看 `_qa\_side.png`
+   与 `_diff.png`。文字已转成路径时，不承诺还能直接编辑文字。
 
 曲线不够顺滑时不要接受“像素 MAE 低但放大有折角”。先把
 `--curve-steps` 提到 32–64，并把 `--simplify-eps` 降到 0.004–0.008，
@@ -230,6 +300,7 @@ python scripts\cleanup.py --out $out
 判断依据：`probe.py --bbox` 报「⚠️ 位图为主」（位图覆盖 ≥60%，矢量绘制和
 文字几乎没有）。期刊里的框架图/流程图常常整张是一张 JPEG/PNG，
 `page.get_drawings()` 返回 0，`extract_figure.py` 抽不出任何可编辑元素。
+独立 PNG/JPG 经 `trace_image.py` 后若文字变形、箭头不能单独选中，也改走本节。
 
 流程（FedRAHi Figure 1 就是这么做的，最终 MAE ≈ 13/255，PPTX 634 个可编辑形状）：
 
@@ -362,6 +433,11 @@ python scripts\cleanup.py --out $out
   必须在替换前 `getGlyphOrder()` 存一份、保存前 `setGlyphOrder()` 塞回去。
 - 没有 cmap 的子集即使补了 post/OS/2 也不要放进 `cv.font_faces`，
   Chrome 的 OTS 照样会拒绝；但它仍要登记进 `self.subsets` 供 gid 反查用。
+- 系统字体查找必须跨平台：以前只认 `%WINDIR%\Fonts`，在 macOS/Linux 上
+  返回 None，整条反查链静默失效。现在按平台扫字体目录（含 macOS 的
+  `/Library/Fonts/Microsoft`），文件名对不上就读 name 表匹配族名；首次
+  未命中会扫一遍目录（几百个字体，约 1–4 秒），索引缓存在模块级
+  `_FONT_INDEX`。mac 没有 Cambria Math 时会退到 STIX/Latin Modern Math。
 
 **同名子集缓存不能跨 span 复用**
 - 缓存 key 必须包含 span 的字体、码位+gid 序列**以及 bbox 起点**。
@@ -410,6 +486,14 @@ python scripts\cleanup.py --out $out
 - 默认三次贝塞尔每条采样 32 段，再以 RDP eps=0.008 pt 化简。
   高倍放大仍有折角时用 `--curve-steps 64 --simplify-eps 0.004`。
 
+**独立位图描摹**
+- `trace_image.py` 使用 VTracer，输出是轮廓路径，不会自动恢复文字语义。
+- `diagram` 预设对小图默认放大 2x，并尽量保留细节；文字仍可能变形。
+- JPEG 的压缩噪点会产生大量碎路径；优先使用 PNG，或降低细节后再描摹。
+- `logo` 是二值预设，会丢弃颜色；彩色流程图不要用它。
+- `photo` 只能做近似描摹，不能期待干净的分层和可编辑对象。
+- 需要可编辑箭头、文字、节点时，自动描摹不是终点，继续手工重绘。
+
 **PPTX**
 - 子集字体在 Windows 上不可用，PPTX 用近似字体（Optima→Candara、
   Helvetica→Arial、Times→Times New Roman）。SVG 用内嵌子集，PPTX 用近似。
@@ -428,6 +512,14 @@ python scripts\probe.py --pdf p.pdf --page 3 --render out\p3.png
 
 # 判断图是原生矢量还是位图（算出 bbox 后跑）
 python scripts\probe.py --pdf p.pdf --page 3 --bbox 54,56,542.5,225.5
+
+# 独立 PNG/JPG → 矢量 SVG（自动预览）
+python scripts\trace_image.py --image Figure1.png --out out\Figure1 `
+    --preset diagram --preview
+
+# 小字图片放大描摹；透明背景保留 alpha
+python scripts\trace_image.py --image scan.jpg --out out\scan `
+    --preset diagram --scale 2 --background transparent
 
 # 实时生成（看过程，自动打开 VS Code 预览）
 python scripts\extract_figure.py --pdf p.pdf --page 3 `

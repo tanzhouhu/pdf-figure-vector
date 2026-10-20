@@ -2,7 +2,7 @@
 
 # pdf-figure-vector
 
-2026.10.20晚16点更新。
+2026.10.20下午16点更新。
 
 把学术 PDF 里的 Figure 原样复刻成**自包含矢量 SVG**和**可编辑 PPTX**；
 也可以把独立 PNG/JPG/WebP 图片自动描摹成矢量 SVG 和原生自由形状 PPTX。

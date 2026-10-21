@@ -4,7 +4,7 @@
 
 2026.10.21下午16点更新。
 
-把学术 PDF 里的 Figure 原样复刻成**自包含矢量 SVG**和**可编辑 PPTX**；
+把学术 PDF 里的 Figure/图表 原样复刻成**自包含矢量 SVG**和**可编辑 PPTX**；
 也可以把独立 PNG/JPG/WebP 图片自动描摹成矢量 SVG 和原生自由形状 PPTX。
 
 这个仓库同时是一个 [Claude Code](https://claude.com/claude-code)/Codex/豆包 /WorkBuddy/Deepseek harness/Mimo code Skill。作为
